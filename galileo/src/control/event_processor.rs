@@ -26,6 +26,7 @@ pub struct EventProcessor {
     pointer_position: Point2d,
     pointer_pressed_position: Point2d,
     touches: Vec<TouchInfo>,
+    touch_midpoint: Point2d,
 
     buttons_state: MouseButtonsState,
 
@@ -42,6 +43,7 @@ impl Default for EventProcessor {
             pointer_position: Default::default(),
             pointer_pressed_position: Default::default(),
             touches: Vec::new(),
+            touch_midpoint: Default::default(),
             buttons_state: Default::default(),
             last_pressed_time: SystemTime::UNIX_EPOCH,
             last_click_time: SystemTime::UNIX_EPOCH,
@@ -195,6 +197,16 @@ impl EventProcessor {
                     prev_position: touch.position,
                 });
 
+                if self.touches.len() == 2 {
+                    // Calculate the midpoint of the two touch positions so we can see how it has changed later
+                    // as the touches move
+                    let midpoint = (self.touches[0].prev_position.coords
+                        + self.touches[1].prev_position.coords)
+                        / 2.;
+
+                    self.touch_midpoint = Point2d::from(midpoint);
+                }
+
                 None
             }
             RawUserEvent::TouchMove(touch) => {
@@ -238,14 +250,20 @@ impl EventProcessor {
 
                     events.push(UserEvent::Zoom(zoom, other_touch.prev_position));
 
-                    // Rotation
+                    // Z Rotation
                     let old_delta = touch_info.prev_position - other_touch.prev_position;
                     let old_angle = old_delta.y.atan2(old_delta.x);
                     let new_delta = position - other_touch.prev_position;
                     let new_angle = new_delta.y.atan2(new_delta.x);
                     let angle_diff = -(new_angle - old_angle);
 
-                    events.push(UserEvent::Rotate(0., angle_diff));
+                    // X rotation
+                    let midpoint = (position.coords + other_touch.prev_position.coords) / 2.;
+                    let midpoint_delta = midpoint - self.touch_midpoint.coords;
+
+                    self.touch_midpoint = Point2d::from(midpoint);
+
+                    events.push(UserEvent::Rotate(midpoint_delta.y, angle_diff));
                 }
 
                 for touch_info in &mut self.touches {

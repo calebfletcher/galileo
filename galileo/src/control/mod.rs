@@ -91,11 +91,11 @@ pub enum UserEvent {
     Scroll(f64, MouseEvent),
 
     /// Zoom is called around a point. This is different from [`UserEvent::Scroll`], as it is not produced by a mouse
-    /// but rather by multi-tough gestures. The first parameter is zoom delta value.
+    /// but rather by multi-touch gestures. The first parameter is zoom delta value.
     Zoom(f64, Point2d),
 
     /// Rotate the view. This is different from [`UserEvent::Drag`], as it is not produced by a mouse
-    /// but rather by multi-tough gestures. The first parameter is the X rotation ('map tilt'), and the second
+    /// but rather by multi-touch gestures. The first parameter is the X rotation ('map tilt'), and the second
     /// is the Z rotation ('map rotation').
     Rotate(f64, f64),
 }

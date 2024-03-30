@@ -19,6 +19,8 @@ pub struct MapControllerParameters {
     max_resolution: f64,
 
     mouse_rotation_speed: f64,
+    touch_rotation_speed: f64,
+    touch_tilt_speed: f64,
     max_rotation_x: f64,
 }
 
@@ -30,6 +32,8 @@ impl Default for MapControllerParameters {
             max_resolution: 156543.03392800014 / 8.0,
             min_resolution: 156543.03392800014 / 8.0 / 2.0f64.powi(16),
             mouse_rotation_speed: 0.005,
+            touch_rotation_speed: 1.,
+            touch_tilt_speed: 0.005,
             max_rotation_x: 80f64.to_radians(),
         }
     }
@@ -83,7 +87,13 @@ impl UserEventHandler for MapController {
                 EventPropagation::Stop
             }
             UserEvent::Rotate(delta_x, delta_z) => {
-                map.set_view(self.get_rotation(map.view(), Vector2::new(*delta_z, *delta_x)));
+                map.set_view(self.get_rotation(
+                    map.view(),
+                    Vector2::new(
+                        self.parameters.touch_rotation_speed * delta_z,
+                        self.parameters.touch_tilt_speed * delta_x,
+                    ),
+                ));
                 EventPropagation::Stop
             }
             _ => EventPropagation::Propagate,
@@ -104,11 +114,9 @@ impl MapController {
         }
     }
 
-    fn get_rotation(&self, curr_view: &MapView, px_delta: Vector2<f64>) -> MapView {
-        let dz = px_delta.x;
-
-        let rotation_z = curr_view.rotation_z() + dz;
-        let mut rotation_x = curr_view.rotation_x() - px_delta.y;
+    fn get_rotation(&self, curr_view: &MapView, delta: Vector2<f64>) -> MapView {
+        let rotation_z = curr_view.rotation_z() + delta.x;
+        let mut rotation_x = curr_view.rotation_x() - delta.y;
 
         if rotation_x < 0.0 {
             rotation_x = 0.0;
