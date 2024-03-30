@@ -6,6 +6,8 @@ use crate::map::Map;
 use galileo_types::cartesian::{CartesianPoint2d, Point2d};
 use web_time::SystemTime;
 
+use super::TouchEvent;
+
 const DRAG_THRESHOLD: f64 = 3.0;
 const CLICK_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(200);
 const DBL_CLICK_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
@@ -26,7 +28,7 @@ pub struct EventProcessor {
     pointer_position: Point2d,
     pointer_pressed_position: Point2d,
     touches: Vec<TouchInfo>,
-    touch_midpoint: Point2d,
+    gesture_controller: GestureController,
 
     buttons_state: MouseButtonsState,
 
@@ -43,7 +45,7 @@ impl Default for EventProcessor {
             pointer_position: Default::default(),
             pointer_pressed_position: Default::default(),
             touches: Vec::new(),
-            touch_midpoint: Default::default(),
+            gesture_controller: Default::default(),
             buttons_state: Default::default(),
             last_pressed_time: SystemTime::UNIX_EPOCH,
             last_click_time: SystemTime::UNIX_EPOCH,
@@ -198,13 +200,8 @@ impl EventProcessor {
                 });
 
                 if self.touches.len() == 2 {
-                    // Calculate the midpoint of the two touch positions so we can see how it has changed later
-                    // as the touches move
-                    let midpoint = (self.touches[0].prev_position.coords
-                        + self.touches[1].prev_position.coords)
-                        / 2.;
-
-                    self.touch_midpoint = Point2d::from(midpoint);
+                    self.gesture_controller
+                        .start([&self.touches[0], &self.touches[1]]);
                 }
 
                 None
@@ -236,34 +233,10 @@ impl EventProcessor {
                         ));
                     }
                 } else if self.touches.len() == 2 {
-                    let Some(other_touch) = self.touches.iter().find(|t| t.id != touch_info.id)
-                    else {
-                        log::warn!("Unexpected touch id");
-                        return None;
-                    };
-
-                    // Zoom
-                    let distance = (other_touch.prev_position - position).magnitude();
-                    let prev_distance =
-                        (other_touch.prev_position - touch_info.prev_position).magnitude();
-                    let zoom = prev_distance / distance;
-
-                    events.push(UserEvent::Zoom(zoom, other_touch.prev_position));
-
-                    // Z Rotation
-                    let old_delta = touch_info.prev_position - other_touch.prev_position;
-                    let old_angle = old_delta.y.atan2(old_delta.x);
-                    let new_delta = position - other_touch.prev_position;
-                    let new_angle = new_delta.y.atan2(new_delta.x);
-                    let angle_diff = -(new_angle - old_angle);
-
-                    // X rotation
-                    let midpoint = (position.coords + other_touch.prev_position.coords) / 2.;
-                    let midpoint_delta = midpoint - self.touch_midpoint.coords;
-
-                    self.touch_midpoint = Point2d::from(midpoint);
-
-                    events.push(UserEvent::Rotate(midpoint_delta.y, angle_diff));
+                    let gesture_events = self
+                        .gesture_controller
+                        .update_gesture([&self.touches[0], &self.touches[1]], &touch);
+                    events.extend_from_slice(&gesture_events);
                 }
 
                 for touch_info in &mut self.touches {
@@ -292,6 +265,8 @@ impl EventProcessor {
                     ));
                 }
 
+                self.gesture_controller.stop();
+
                 Some(events)
             }
         }
@@ -306,5 +281,66 @@ impl EventProcessor {
             screen_pointer_position,
             buttons: self.buttons_state,
         }
+    }
+}
+
+/// A controller to manage two-touch gestures.
+///
+/// Supports zoom, pan, and tilt gestures.
+#[derive(Default)]
+struct GestureController {}
+
+impl GestureController {
+    /// Start an active gesture.
+    ///
+    /// Called the moment there is two active touches
+    fn start(&mut self, _touches: [&TouchInfo; 2]) -> Vec<UserEvent> {
+        vec![]
+    }
+
+    /// Update the controller with the state of the two touches, and the event.
+    fn update_gesture(&mut self, touches: [&TouchInfo; 2], event: &TouchEvent) -> Vec<UserEvent> {
+        let Some(touch_info) = touches.iter().find(|t| t.id == event.touch_id) else {
+            log::warn!("Unexpected touch id");
+            return Vec::new();
+        };
+        let Some(other_touch) = touches.iter().find(|t| t.id != event.touch_id) else {
+            log::warn!("Unexpected touch id");
+            return Vec::new();
+        };
+
+        let mut events = Vec::new();
+
+        // Zoom
+        let distance = (other_touch.prev_position - event.position).magnitude();
+        let prev_distance = (other_touch.prev_position - touch_info.prev_position).magnitude();
+        let zoom = prev_distance / distance;
+
+        events.push(UserEvent::Zoom(zoom, other_touch.prev_position));
+
+        // X rotation
+        let last_midpoint =
+            (touch_info.prev_position.coords + other_touch.prev_position.coords) / 2.;
+        let current_midpoint = (event.position.coords + other_touch.prev_position.coords) / 2.;
+        let midpoint_delta = current_midpoint - last_midpoint;
+
+        // Z Rotation
+        let old_delta = touch_info.prev_position - other_touch.prev_position;
+        let old_angle = old_delta.y.atan2(old_delta.x);
+        let new_delta = event.position - other_touch.prev_position;
+        let new_angle = new_delta.y.atan2(new_delta.x);
+        let angle_diff = -(new_angle - old_angle);
+
+        events.push(UserEvent::Rotate(midpoint_delta.y, angle_diff));
+
+        events
+    }
+
+    /// Stop any active gestures.
+    ///
+    /// Should be called when either of the touches has been released, or if
+    /// additional touches are made.
+    fn stop(&mut self) -> Vec<UserEvent> {
+        vec![]
     }
 }
