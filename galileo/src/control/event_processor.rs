@@ -9,6 +9,9 @@ use web_time::SystemTime;
 use super::TouchEvent;
 
 const DRAG_THRESHOLD: f64 = 3.0;
+const ZOOM_THRESHOLD: f64 = 60.0;
+const TILT_THRESHOLD: f64 = 60.0;
+const ROTATE_THRESHOLD: f64 = 0.10;
 const CLICK_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(200);
 const DBL_CLICK_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
 
@@ -17,6 +20,18 @@ struct TouchInfo {
     start_position: Point2d,
     _start_time: SystemTime,
     prev_position: Point2d,
+}
+
+#[derive(PartialEq)]
+enum TouchMode {
+    /// Single-touch map scrolling
+    Pan,
+    /// Zoom map view
+    Zoom,
+    /// Tilt map view along X axis
+    Tilt,
+    /// Rotate map view along Z axis
+    Rotate,
 }
 
 /// Stores input state, converts [`RawUserEvent`] into [`UserEvent`] and manages a list of event handlers.
@@ -265,8 +280,6 @@ impl EventProcessor {
                     ));
                 }
 
-                self.gesture_controller.stop();
-
                 Some(events)
             }
         }
@@ -287,60 +300,102 @@ impl EventProcessor {
 /// A controller to manage two-touch gestures.
 ///
 /// Supports zoom, pan, and tilt gestures.
-#[derive(Default)]
-struct GestureController {}
+struct GestureController {
+    touch_mode: TouchMode,
+    midpoint_start: Point2d,
+    angle_start: f64,
+    distance_start: f64,
+}
+
+impl Default for GestureController {
+    fn default() -> Self {
+        Self {
+            touch_mode: TouchMode::Pan,
+            midpoint_start: Default::default(),
+            angle_start: Default::default(),
+            distance_start: Default::default(),
+        }
+    }
+}
 
 impl GestureController {
     /// Start an active gesture.
     ///
     /// Called the moment there is two active touches
-    fn start(&mut self, _touches: [&TouchInfo; 2]) -> Vec<UserEvent> {
-        vec![]
+    fn start(&mut self, touches: [&TouchInfo; 2]) {
+        let point_1 = touches[0].start_position;
+        let point_2 = touches[1].start_position;
+        let delta = point_1 - point_2;
+
+        self.distance_start = delta.magnitude();
+        self.midpoint_start = Point2d::from((point_1.coords + point_2.coords) / 2.);
+        self.angle_start = delta.y.atan2(delta.x);
+
+        self.touch_mode = TouchMode::Pan;
     }
 
     /// Update the controller with the state of the two touches, and the event.
     fn update_gesture(&mut self, touches: [&TouchInfo; 2], event: &TouchEvent) -> Vec<UserEvent> {
-        let Some(touch_info) = touches.iter().find(|t| t.id == event.touch_id) else {
+        if !touches.iter().any(|t| t.id == event.touch_id) {
             log::warn!("Unexpected touch id");
             return Vec::new();
+        }
+        let other_touch_position = if event.touch_id == touches[0].id {
+            touches[1].prev_position
+        } else {
+            touches[0].prev_position
         };
-        let Some(other_touch) = touches.iter().find(|t| t.id != event.touch_id) else {
-            log::warn!("Unexpected touch id");
-            return Vec::new();
+
+        let old_positions = [touches[0].prev_position, touches[1].prev_position];
+        let new_positions = if event.touch_id == touches[0].id {
+            [event.position, touches[1].prev_position]
+        } else {
+            [touches[0].prev_position, event.position]
         };
+
+        let delta = new_positions[0] - new_positions[1];
+        let distance = delta.magnitude();
+        let midpoint = Point2d::from((new_positions[0].coords + new_positions[1].coords) / 2.);
+        let angle = delta.y.atan2(delta.x);
+
+        // Check whether we should switch out of drag mode
+        if self.touch_mode == TouchMode::Pan {
+            if (distance - self.distance_start).abs() > ZOOM_THRESHOLD {
+                self.touch_mode = TouchMode::Zoom;
+            } else if (midpoint - self.midpoint_start).magnitude() > TILT_THRESHOLD {
+                self.touch_mode = TouchMode::Tilt;
+            } else if (angle - self.angle_start).abs() > ROTATE_THRESHOLD {
+                self.touch_mode = TouchMode::Rotate;
+            }
+        }
 
         let mut events = Vec::new();
 
-        // Zoom
-        let distance = (other_touch.prev_position - event.position).magnitude();
-        let prev_distance = (other_touch.prev_position - touch_info.prev_position).magnitude();
-        let zoom = prev_distance / distance;
-
-        events.push(UserEvent::Zoom(zoom, other_touch.prev_position));
-
-        // X rotation
-        let last_midpoint =
-            (touch_info.prev_position.coords + other_touch.prev_position.coords) / 2.;
-        let current_midpoint = (event.position.coords + other_touch.prev_position.coords) / 2.;
-        let midpoint_delta = current_midpoint - last_midpoint;
-
-        // Z Rotation
-        let old_delta = touch_info.prev_position - other_touch.prev_position;
-        let old_angle = old_delta.y.atan2(old_delta.x);
-        let new_delta = event.position - other_touch.prev_position;
-        let new_angle = new_delta.y.atan2(new_delta.x);
-        let angle_diff = -(new_angle - old_angle);
-
-        events.push(UserEvent::Rotate(midpoint_delta.y, angle_diff));
-
+        match self.touch_mode {
+            TouchMode::Pan => {
+                let last_midpoint =
+                    Point2d::from((old_positions[0].coords + old_positions[1].coords) / 2.);
+                let midpoint_delta = midpoint - last_midpoint;
+                events.push(UserEvent::Pan(midpoint_delta, midpoint));
+            }
+            TouchMode::Zoom => {
+                let prev_distance = (old_positions[0] - old_positions[1]).magnitude();
+                let zoom = prev_distance / distance;
+                events.push(UserEvent::Zoom(zoom, other_touch_position));
+            }
+            TouchMode::Rotate => {
+                let old_delta = old_positions[0] - old_positions[1];
+                let old_angle = old_delta.y.atan2(old_delta.x);
+                let angle_diff = -(angle - old_angle);
+                events.push(UserEvent::Rotate(0., angle_diff));
+            }
+            TouchMode::Tilt => {
+                let last_midpoint =
+                    Point2d::from((old_positions[0].coords + old_positions[1].coords) / 2.);
+                let midpoint_delta = midpoint - last_midpoint;
+                events.push(UserEvent::Rotate(midpoint_delta.y, 0.));
+            }
+        }
         events
-    }
-
-    /// Stop any active gestures.
-    ///
-    /// Should be called when either of the touches has been released, or if
-    /// additional touches are made.
-    fn stop(&mut self) -> Vec<UserEvent> {
-        vec![]
     }
 }

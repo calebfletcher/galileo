@@ -96,6 +96,10 @@ impl UserEventHandler for MapController {
                 ));
                 EventPropagation::Stop
             }
+            UserEvent::Pan(delta, to) => {
+                map.set_view(map.view().translate_by_pixels(to - delta, *to));
+                EventPropagation::Stop
+            }
             _ => EventPropagation::Propagate,
         }
     }

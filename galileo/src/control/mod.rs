@@ -98,6 +98,11 @@ pub enum UserEvent {
     /// but rather by multi-touch gestures. The first parameter is the X rotation ('map tilt'), and the second
     /// is the Z rotation ('map rotation').
     Rotate(f64, f64),
+
+    /// Pan the view. This is different from [`UserEvent::Drag`], as it is not produced by a mouse
+    /// but rather by multi-touch gestures. The first parameter is the delta, the second is the end
+    /// position of the pan in pixel space.
+    Pan(Vector2<f64>, Point2d),
 }
 
 /// Value returned by an [`UserEventHandler`] to indicate the status of the event.
