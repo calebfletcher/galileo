@@ -198,9 +198,7 @@ impl EventProcessor {
                 None
             }
             RawUserEvent::TouchMove(touch) => {
-                let Some(touch_info) = self.touches.iter().find(|t| t.id == touch.touch_id) else {
-                    return None;
-                };
+                let touch_info = self.touches.iter().find(|t| t.id == touch.touch_id)?;
                 let position = touch.position;
 
                 let mut events = vec![];
@@ -232,12 +230,22 @@ impl EventProcessor {
                         return None;
                     };
 
+                    // Zoom
                     let distance = (other_touch.prev_position - position).magnitude();
                     let prev_distance =
                         (other_touch.prev_position - touch_info.prev_position).magnitude();
                     let zoom = prev_distance / distance;
 
-                    events.push(UserEvent::Zoom(zoom, other_touch.prev_position))
+                    events.push(UserEvent::Zoom(zoom, other_touch.prev_position));
+
+                    // Rotation
+                    let old_delta = touch_info.prev_position - other_touch.prev_position;
+                    let old_angle = old_delta.y.atan2(old_delta.x);
+                    let new_delta = position - other_touch.prev_position;
+                    let new_angle = new_delta.y.atan2(new_delta.x);
+                    let angle_diff = -(new_angle - old_angle);
+
+                    events.push(UserEvent::Rotate(0., angle_diff));
                 }
 
                 for touch_info in &mut self.touches {

@@ -18,7 +18,7 @@ pub struct MapControllerParameters {
     min_resolution: f64,
     max_resolution: f64,
 
-    rotation_speed: f64,
+    mouse_rotation_speed: f64,
     max_rotation_x: f64,
 }
 
@@ -29,7 +29,7 @@ impl Default for MapControllerParameters {
             zoom_speed: 0.2,
             max_resolution: 156543.03392800014 / 8.0,
             min_resolution: 156543.03392800014 / 8.0 / 2.0f64.powi(16),
-            rotation_speed: 0.005,
+            mouse_rotation_speed: 0.005,
             max_rotation_x: 80f64.to_radians(),
         }
     }
@@ -45,23 +45,28 @@ impl UserEventHandler for MapController {
             {
                 EventPropagation::Consume
             }
-            UserEvent::Drag(button, delta, e) => match button {
-                MouseButton::Left | MouseButton::Other => {
-                    let current_position = e.screen_pointer_position;
-                    let prev_position = current_position - delta;
+            UserEvent::Drag(button, delta, e) => {
+                match button {
+                    MouseButton::Left | MouseButton::Other => {
+                        let current_position = e.screen_pointer_position;
+                        let prev_position = current_position - delta;
 
-                    map.set_view(
-                        map.view()
-                            .translate_by_pixels(prev_position, current_position),
-                    );
-                    EventPropagation::Stop
+                        map.set_view(
+                            map.view()
+                                .translate_by_pixels(prev_position, current_position),
+                        );
+                        EventPropagation::Stop
+                    }
+                    MouseButton::Right => {
+                        map.set_view(self.get_rotation(
+                            map.view(),
+                            *delta * self.parameters.mouse_rotation_speed,
+                        ));
+                        EventPropagation::Stop
+                    }
+                    _ => EventPropagation::Propagate,
                 }
-                MouseButton::Right => {
-                    map.set_view(self.get_rotation(map.view(), *delta));
-                    EventPropagation::Stop
-                }
-                _ => EventPropagation::Propagate,
-            },
+            }
             UserEvent::Scroll(delta, mouse_event) => {
                 let zoom = self.get_zoom(*delta, map.view().resolution());
                 let target = map
@@ -75,6 +80,10 @@ impl UserEventHandler for MapController {
                 let target = map.view().zoom(*zoom, *center);
                 map.set_view(target);
 
+                EventPropagation::Stop
+            }
+            UserEvent::Rotate(delta_x, delta_z) => {
+                map.set_view(self.get_rotation(map.view(), Vector2::new(*delta_z, *delta_x)));
                 EventPropagation::Stop
             }
             _ => EventPropagation::Propagate,
@@ -96,10 +105,10 @@ impl MapController {
     }
 
     fn get_rotation(&self, curr_view: &MapView, px_delta: Vector2<f64>) -> MapView {
-        let dz = px_delta.x * self.parameters.rotation_speed;
+        let dz = px_delta.x;
 
         let rotation_z = curr_view.rotation_z() + dz;
-        let mut rotation_x = curr_view.rotation_x() - px_delta.y * self.parameters.rotation_speed;
+        let mut rotation_x = curr_view.rotation_x() - px_delta.y;
 
         if rotation_x < 0.0 {
             rotation_x = 0.0;
